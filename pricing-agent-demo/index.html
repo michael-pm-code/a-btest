@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智能定价 Agent | Subotiz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- 顶栏：Subotiz 平台 + 智能定价 -->
+    <header class="header">
+      <div class="header-left">
+        <a href="#" class="logo">Subotiz</a>
+        <span class="divider">/</span>
+        <span class="product-name">智能定价 Agent</span>
+      </div>
+      <nav class="nav-tabs">
+        <button class="tab active" data-tab="market">市场洞察</button>
+        <button class="tab" data-tab="suggest">价格建议</button>
+      </nav>
+      <div class="header-right">
+        <span class="badge">AI 驱动</span>
+        <button class="btn btn-ghost">文档</button>
+        <button class="btn btn-primary">连接 Subotiz 账单</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- 市场洞察 -->
+      <section id="panel-market" class="panel active">
+        <div class="panel-header">
+          <h1>市场洞察</h1>
+          <p>基于业务描述或官网，自动识别竞品并持续监控其定价</p>
+        </div>
+        <div class="cards-grid">
+          <div class="card">
+            <div class="card-icon">🔍</div>
+            <h3>搜寻竞品</h3>
+            <p>输入业务描述或官网链接，自动匹配 3–5 个核心竞品</p>
+            <div class="card-form">
+              <input type="text" placeholder="例如：AI 写作助手，面向中小团队..." class="input" />
+              <input type="url" placeholder="或粘贴官网 URL" class="input" />
+              <button class="btn btn-primary btn-block">开始识别竞品</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-icon">📊</div>
+            <h3>了解竞品定价</h3>
+            <p>抓取竞品价格结构：套餐层级、周期、试用、折扣方式</p>
+            <div class="card-placeholder">
+              <span class="hint">选择竞品后自动拉取</span>
+              <ul class="mock-list">
+                <li>套餐层级：Free / Pro / Team / Enterprise</li>
+                <li>计费周期：月付 / 年付</li>
+                <li>试用：14 天</li>
+              </ul>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-icon">🔄</div>
+            <h3>监控竞品价格变化</h3>
+            <p>定期监测竞品价格页面变动，及时提醒</p>
+            <div class="card-placeholder">
+              <span class="hint">最近监测</span>
+              <div class="mock-alert">竞品 A · 2025-03-08 价格页有更新</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 价格建议：含推荐结果 → 定价逻辑解释 → 确认应用 → 快速配置 -->
+      <section id="panel-suggest" class="panel">
+        <div class="panel-header">
+          <h1>价格建议</h1>
+          <p>冷启动、存量优化或综合定价，生成方案后可查看专业定价逻辑解释，确认后一键配置到 Subotiz</p>
+        </div>
+
+        <!-- 第一步：获取建议的入口（AI 推荐 or 商户导入） -->
+        <div class="section-label">获取定价方案</div>
+        <div class="cards-grid">
+          <div class="card card-wide">
+            <div class="card-icon">🚀</div>
+            <h3>冷启动定价建议</h3>
+            <p>结合竞品价格区间、目标市场、产品定位生成定价区间建议</p>
+            <div class="card-form">
+              <label>目标市场</label>
+              <select class="input"><option>全球 / 北美 / 中国...</option></select>
+              <label>产品定位</label>
+              <input type="text" placeholder="例如：高端 / 性价比 / 开发者工具" class="input" />
+              <button class="btn btn-primary js-generate">生成冷启动建议</button>
+            </div>
+          </div>
+          <div class="card card-wide">
+            <div class="card-icon">📈</div>
+            <h3>存量优化建议</h3>
+            <p>基于现有定价与交易数据给出优化建议</p>
+            <div class="card-placeholder">
+              <span class="hint">已连接 Subotiz 账单后可分析 MRR、转化率、流失</span>
+              <button class="btn btn-ghost" disabled>需先连接数据源</button>
+            </div>
+          </div>
+          <div class="card card-full">
+            <div class="card-icon">🎯</div>
+            <h3>综合定价建议</h3>
+            <p>结合竞品定价、业务说明、现有定价和数据（可能为空）生成结构化定价方案；也支持商户直接导入已有定价配置</p>
+            <div class="card-form row">
+              <div class="form-group">
+                <label>业务说明</label>
+                <textarea class="input" rows="2" placeholder="简要描述产品与目标客户..."></textarea>
+              </div>
+              <div class="form-group">
+                <label>现有定价（可选）</label>
+                <input type="text" class="input" placeholder="当前套餐与价格" />
+              </div>
+              <button class="btn btn-primary btn-lg js-generate">生成综合定价方案</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 第二步：推荐结果 + 定价逻辑解释（AI 给出建议后才展示） -->
+        <div id="recommendation-block" class="recommendation-block" hidden>
+          <div class="section-label">推荐方案与定价逻辑说明</div>
+          <div class="card card-full recommendation-card">
+            <h3 class="recommendation-title">当前定价方案</h3>
+            <div class="mock-result">
+              <pre>{
+  "tiers": ["Starter", "Pro", "Enterprise"],
+  "priceRange": { "min": 19, "max": 299 },
+  "billingCycle": ["monthly", "annual"],
+  "recommendations": ["建议年付折扣 20%", "Pro 档建议锚定 $49/月"]
+}</pre>
+            </div>
+            <div class="logic-explanation">
+              <h4>💡 定价逻辑解释</h4>
+              <p>对推荐价格的可解释说明，便于您理解与决策：</p>
+              <blockquote>
+                建议 Starter $19/月：竞品 X、Y 同档位为 $15–22，您的功能更完整，取中上区间利于后续升级路径。Pro $49/月 与竞品中位一致，便于转化；Enterprise 建议采用定制报价 + 用量封顶，兼顾大客户与可预测收入。
+              </blockquote>
+            </div>
+            <details class="knowledge-details">
+              <summary>📚 定价知识库：模型与最佳实践</summary>
+              <ul class="knowledge-list">
+                <li><strong>用量计费</strong>：适合 API、算力类产品，需明确单位与阶梯</li>
+                <li><strong>席位制</strong>：适合协作与 B2B SaaS，便于扩张收入</li>
+                <li><strong>积分/额度</strong>：适合多 SKU 或消耗型 AI 能力</li>
+                <li><strong>混合模式</strong>：基础费 + 用量，平衡可预测性与弹性</li>
+              </ul>
+            </details>
+            <div class="apply-actions">
+              <button type="button" class="btn btn-primary btn-lg js-apply">应用该方案并配置定价</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 第三步：快速配置（用户确认「应用」后才展示） -->
+        <div id="quick-config-block" class="quick-config-block" hidden>
+          <div class="section-label">快速配置</div>
+          <p class="section-desc">将已确认的定价方案同步为 Subotiz 商品与价格实体</p>
+          <div class="cards-grid">
+            <div class="card card-wide">
+              <div class="card-icon">⚡</div>
+              <h3>一键创建定价</h3>
+              <p>将方案转化为系统内商品实体（product）与价格实体（price）</p>
+              <div class="card-form">
+                <label>当前待同步方案</label>
+                <input type="text" class="input" readonly value="综合定价方案 · 2025-03-10" />
+                <button class="btn btn-primary">同步到 Subotiz</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-icon">📋</div>
+              <h3>价格表配置</h3>
+              <p>自动生成价格表结构（展示页/API 用）</p>
+              <button class="btn btn-ghost">生成价格表模板</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 页脚：竞品对比提示 -->
+    <footer class="footer">
+      <p>
+        面向 AI 创业者的智能定价服务 · 集成于 Subotiz 订阅与支付平台 ·
+        竞品参考：<a href="https://www.runonatlas.com" target="_blank" rel="noopener">Atlas</a>
+      </p>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

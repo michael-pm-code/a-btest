@@ -1,0 +1,335 @@
+/* AI 数据分析 Agent - 思考过程演示 */
+:root {
+  --bg: #f8fafc;
+  --card-bg: #fff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --text-light: #94a3b8;
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,.06);
+  --user-msg-bg: #eff6ff;
+  --agent-msg-bg: #f1f5f9;
+  /* 思考过程区域 - 参照图：深色块、绿色完成、紫蓝进行中 */
+  --thinking-bg: #2d3239;
+  --thinking-done: #10b981;
+  --thinking-active: #8b5cf6;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+#app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 20px 0;
+  padding-bottom: 100px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  margin-bottom: 24px;
+  text-align: center;
+}
+.title { margin: 0 0 4px; font-size: 1.5rem; font-weight: 600; color: var(--text); }
+.subtitle { margin: 0; font-size: 0.9rem; color: var(--text-muted); }
+
+.chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+
+.msg {
+  margin-bottom: 20px;
+}
+.msg-user .msg-bubble { background: var(--user-msg-bg); margin-left: 48px; margin-right: 0; }
+.msg-agent .msg-bubble { background: var(--agent-msg-bg); margin-right: 48px; margin-left: 0; }
+.msg-bubble {
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  font-size: 15px;
+  line-height: 1.55;
+  box-shadow: var(--shadow);
+}
+
+/* 输入区 - 吸底 */
+.input-area {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 12px 20px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-family: inherit;
+  resize: none;
+  min-height: 48px;
+  max-height: 120px;
+}
+.input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+.submit-btn {
+  padding: 12px 24px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.submit-btn:hover { background: var(--primary-hover); }
+.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Loading 思考中 / 正在思考 - 最弱文案 + 紫点 */
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.thinking-header.completed .thinking-spinner { display: none; }
+.thinking-label-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 6px;
+}
+.thinking-header.completed .thinking-label-wrap:hover {
+  background: rgba(0,0,0,.06);
+}
+.thinking-header .thinking-label {
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: 500;
+}
+.thinking-header.completed .thinking-label {
+  color: #9ca3af;
+  font-weight: 500;
+}
+.thinking-spinner {
+  width: 10px;
+  height: 10px;
+  border: none;
+  border-radius: 50%;
+  background: var(--thinking-active);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.toggle-thinking {
+  background: none;
+  border: none;
+  color: #b0b8c4;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.toggle-thinking:hover { color: #94a3b8; background: rgba(0,0,0,.04); }
+.toggle-thinking .icon { display: inline-flex; align-items: center; justify-content: center; transition: transform 0.2s; }
+.toggle-thinking .icon-chevron svg { display: block; }
+.toggle-thinking.collapsed .icon { transform: rotate(-90deg); }
+
+/* 思考过程区域 - 深色块、绿线绿圈、紫蓝进行中 */
+.thinking-body {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: var(--thinking-bg);
+  border-radius: 10px;
+}
+.thinking-body.collapsed { display: none; }
+
+.thinking-node {
+  position: relative;
+  margin-bottom: 16px;
+  transition: opacity 0.3s;
+}
+.thinking-node:last-child { margin-bottom: 0; }
+.thinking-node.done { opacity: 1; }
+/* 圆圈与说明之间的竖线（绿色，紧挨圆圈下方） */
+.thinking-node.done::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 15px;
+  width: 2px;
+  height: 5px;
+  background: var(--thinking-done);
+}
+/* 两节点之间的竖线（绿色，在间距中） */
+.thinking-node.done:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 100%;
+  width: 2px;
+  height: 16px;
+  background: var(--thinking-done);
+}
+.thinking-node-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.thinking-node-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.thinking-node.done .thinking-node-icon {
+  border-radius: 50%;
+  background: var(--thinking-done);
+  box-shadow: none;
+}
+.thinking-node-spinner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid rgba(139, 92, 246, 0.35);
+  border-top-color: var(--thinking-active);
+  border-radius: 50%;
+  animation: spin 1.5s linear infinite;
+}
+.thinking-node-check {
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.thinking-node-check svg { display: block; }
+.thinking-node.done .thinking-node-spinner { display: none !important; }
+.thinking-node-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #9ca3af;
+}
+/* 完成节点：标题亮绿加粗 */
+.thinking-node.done .thinking-node-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--thinking-done);
+}
+/* 进行中节点：标题紫蓝 */
+.thinking-node.active .thinking-node-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--thinking-active);
+}
+/* 说明：深色圆角框 + 灰色文案 + 左侧绿线 */
+.thinking-node-summary {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+  line-height: 1.5;
+  margin-top: 6px;
+  margin-left: 7px;
+  padding: 10px 12px;
+  padding-left: 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 2px solid var(--thinking-done);
+}
+
+/* 回答正文 */
+.answer-body {
+  margin-top: 16px;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.answer-body p { margin: 0 0 10px; }
+.answer-body p:last-child { margin-bottom: 0; }
+
+/* 柱状图 */
+.chart-wrap {
+  margin-top: 20px;
+  padding: 20px;
+  background: #fff;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.chart-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 16px;
+}
+.chart-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chart-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.chart-label {
+  width: 100px;
+  flex-shrink: 0;
+  color: var(--text);
+}
+.chart-bar-wrap {
+  flex: 1;
+  height: 28px;
+  background: var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.chart-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #60a5fa);
+  border-radius: 6px;
+  min-width: 4px;
+  transition: width 0.5s ease-out;
+}
+.chart-value {
+  width: 36px;
+  text-align: right;
+  font-weight: 500;
+  color: var(--text);
+}

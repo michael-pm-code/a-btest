@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 数据分析 Agent · 思考过程演示</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <h1 class="title">AI 数据分析 Agent</h1>
+      <p class="subtitle">思考过程演示</p>
+    </header>
+
+    <main class="chat-container">
+      <div id="messages" class="messages">
+        <!-- 用户消息与 Agent 回复将在此渲染 -->
+      </div>
+
+      <div class="input-area">
+        <textarea
+          id="questionInput"
+          class="input"
+          placeholder="输入您的问题，例如：最近一个月哪个国家/地区付款客户最多？"
+          rows="2"
+        ></textarea>
+        <button id="submitBtn" class="submit-btn" type="button">提交</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
