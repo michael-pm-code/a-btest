@@ -12,8 +12,20 @@ const mockExperiments = [
     createdBy: 'zhangsan@example.com',
     updatedAt: '2025-03-15 09:20',
     updatedBy: 'zhangsan@example.com',
-    target: '定价',
-    targetLabel: '专业版定价 (price_xxx)',
+    target: '自定义',
+    targetLabel: '新注册引导流程优化',
+    goal: '验证新注册引导流程对用户激活率与功能使用深度的影响',
+    customData: {
+      direct: [
+        { key: 'page_view', displayName: '页面访问数', aggregate: 'count' },
+        { key: 'signup_complete', displayName: '注册完成数', aggregate: 'unique_users' },
+        { key: 'session_duration', displayName: '平均会话时长', aggregate: 'mean' }
+      ],
+      derived: [
+        { type: 'conversion', displayName: '注册转化率', numeratorKey: 'signup_complete' },
+        { type: 'retention', displayName: '次日留存率', retentionPeriod: 'd1', basisKey: 'signup_complete' }
+      ]
+    },
     duration: '14 天',
     userCount: 1248,
     status: 'active',
@@ -111,6 +123,43 @@ function getFormTargetTypeKey(exp) {
   return 'custom';
 }
 
+/** 合并 legacy customMetrics 与新版 customData */
+function normalizeCustomData(exp) {
+  if (!exp) return { direct: [], derived: [] };
+  if (exp.customData && Array.isArray(exp.customData.direct)) {
+    return {
+      direct: exp.customData.direct.map(d => ({ ...d })),
+      derived: Array.isArray(exp.customData.derived) ? exp.customData.derived.map(d => ({ ...d })) : []
+    };
+  }
+  if (exp.customMetrics && exp.customMetrics.length) {
+    return { direct: exp.customMetrics.map(m => ({ ...m })), derived: [] };
+  }
+  return { direct: [], derived: [] };
+}
+
+function getRetentionDaysFromDerived(der) {
+  if (!der || der.type !== 'retention') return 1;
+  if (der.retentionPeriod === 'd1') return 1;
+  if (der.retentionPeriod === 'd7') return 7;
+  if (der.retentionPeriod === 'd30') return 30;
+  if (der.retentionPeriod === 'custom' && der.customDays != null) {
+    const n = parseInt(String(der.customDays), 10);
+    if (Number.isInteger(n)) return Math.max(2, Math.min(90, n));
+  }
+  return 1;
+}
+
+function defaultRetentionDisplayName(der) {
+  if (!der || der.type !== 'retention') return '次日留存率';
+  const n = getRetentionDaysFromDerived(der);
+  if (der.retentionPeriod === 'd1') return '次日留存率';
+  if (der.retentionPeriod === 'd7') return '7 日留存率';
+  if (der.retentionPeriod === 'd30') return '30 日留存率';
+  if (der.retentionPeriod === 'custom') return `${n} 日留存率`;
+  return '次日留存率';
+}
+
 const getExperimentDetail = (id) => {
   const userAssignments = (() => {
     const groups = ['对照组', '实验组 A', '实验组 B'];
@@ -162,6 +211,7 @@ const getExperimentDetail = (id) => {
     userScope: exp.userScopeSaved || '定向',
     userScopeRules: exp.userScopeRulesSaved || commonRules,
     groups: (exp.savedGroups && exp.savedGroups.length) ? exp.savedGroups : buildDetailGroupsForExperiment(exp),
+    customData: normalizeCustomData(exp),
     userAssignments
   };
 };
@@ -174,24 +224,725 @@ const conversionFormulas = [
   '支付成功用户数 ÷ 完成支付操作用户数',
   '支付成功用户数 ÷ 浏览用户数'
 ];
-const getExperimentData = (id) => ({
-  duration: '14 天',
-  participantCount: 1248,
-  metricLabels: ['浏览用户数', '发起结账用户数', '提交订单用户数', '完成支付操作用户数', '支付成功用户数'],
-  conversionLabels: ['浏览结账率', '订单提交率', '支付操作完成率', '支付成功率', '浏览转化率'],
-  // browseConversionConfidence：仅「浏览转化率」相对对照组变化的置信度（对照组无）
-  rows: [
-    { group: '对照组', values: [420, 168, 126, 105, 84], browseConversionConfidence: null },
-    { group: '实验组 A', values: [408, 183, 146, 122, 98], browseConversionConfidence: 0.93 },
-    { group: '实验组 B', values: [420, 176, 123, 98, 74], browseConversionConfidence: 0.84 }
-  ],
-  // 收入与风险：confidence 顺序对应 GMV、ARPU、订阅续费率、退款率、拒付率（支付用户数、支付订单数不展示置信度）
-  revenueRows: [
-    { group: '对照组', payingUsers: 84, orderCount: 105, gmv: 12500, arpu: 148.8, renewalRate: 0.85, refundRate: 0.021, chargebackRate: 0.003, confidence: null },
-    { group: '实验组 A', payingUsers: 98, orderCount: 122, gmv: 15800, arpu: 161.2, renewalRate: 0.88, refundRate: 0.018, chargebackRate: 0.002, confidence: [0.98, 0.88, 0.85, 0.90, 0.78] },
-    { group: '实验组 B', payingUsers: 74, orderCount: 98, gmv: 11200, arpu: 151.4, renewalRate: 0.82, refundRate: 0.025, chargebackRate: 0.004, confidence: [0.82, 0.90, 0.75, 0.92, 0.80] }
-  ]
-});
+/** 自定义指标聚合方式：与表单 option value 一致 */
+const CUSTOM_AGGREGATE_META = {
+  count: { label: '计数（触发次数）', short: '计数' },
+  unique_users: { label: '去重用户数', short: '去重用户' },
+  sum: { label: '求和', short: '求和' },
+  mean: { label: '均值', short: '均值' }
+};
+
+/** 留存率计算依据：非业务事件 key，表示 SDK 初始化时上报用户标识对应的浏览用户口径 */
+const RETENTION_BASIS_SDK_INIT_BROWSE = '__sdk_init_browse__';
+const RETENTION_BASIS_SDK_INIT_BROWSE_LABEL = '浏览用户（SDK 初始化口径）';
+
+function getAggregateShort(agg) {
+  return (CUSTOM_AGGREGATE_META[agg] && CUSTOM_AGGREGATE_META[agg].short) || agg;
+}
+
+const DIRECT_TOOLTIP_BY_AGG = {
+  count: '统计该事件被触发的总次数',
+  unique_users: '统计触发过该事件的唯一用户数',
+  sum: '对该事件上报的 value 值累计求和',
+  mean: '对该事件上报的 value 值求算术平均'
+};
+
+function buildDirectTooltip(agg) {
+  return DIRECT_TOOLTIP_BY_AGG[agg] || '';
+}
+
+function buildDerivedTooltip(der, keyToLabel) {
+  if (der.type === 'ratio') {
+    const a = keyToLabel[der.numeratorKey] || der.numeratorKey;
+    const b = keyToLabel[der.denominatorKey] || der.denominatorKey;
+    return `${a} ÷ ${b}`;
+  }
+  if (der.type === 'conversion') {
+    const a = keyToLabel[der.numeratorKey] || der.numeratorKey;
+    return `${a} ÷ 分组总用户数`;
+  }
+  if (der.type === 'retention') {
+    const n = getRetentionDaysFromDerived(der);
+    if (der.basisKey === RETENTION_BASIS_SDK_INIT_BROWSE) {
+      return `首日按 SDK 初始化口径识别的浏览用户中，第 ${n} 日再次活跃的用户占比，基于用户 ID 计算`;
+    }
+    const evt = keyToLabel[der.basisKey] || der.basisKey;
+    return `首日触发过「${evt}」的用户中，第 ${n} 日再次触发的用户占比，基于用户 ID 计算`;
+  }
+  return '';
+}
+
+function buildCustomDataColumnsMeta(exp) {
+  const cd = normalizeCustomData(exp);
+  const keyToLabel = {};
+  cd.direct.forEach(d => {
+    if (d.key) keyToLabel[d.key] = d.displayName || d.key;
+  });
+  const cols = [];
+  cd.direct.forEach(d => {
+    cols.push({
+      kind: 'direct',
+      key: d.key,
+      displayName: d.displayName,
+      aggregate: d.aggregate,
+      tooltip: buildDirectTooltip(d.aggregate)
+    });
+  });
+  cd.derived.forEach((der, i) => {
+    cols.push({
+      kind: 'derived',
+      derivedType: der.type,
+      index: i,
+      displayName: der.displayName,
+      tooltip: buildDerivedTooltip(der, keyToLabel)
+    });
+  });
+  return cols;
+}
+
+/** 实验数据 Tab：自定义实验可附带 customDataColumns / customDataRows */
+function getExperimentData(id) {
+  const exp = experiments.find(e => e.id === id);
+  const data = {
+    duration: '14 天',
+    participantCount: 1248,
+    metricLabels: ['浏览用户数', '发起结账用户数', '提交订单用户数', '完成支付操作用户数', '支付成功用户数'],
+    conversionLabels: ['浏览结账率', '订单提交率', '支付操作完成率', '支付成功率', '浏览转化率'],
+    rows: [
+      { group: '对照组', values: [420, 168, 126, 105, 84], browseConversionConfidence: null },
+      { group: '实验组 A', values: [408, 183, 146, 122, 98], browseConversionConfidence: 0.93 },
+      { group: '实验组 B', values: [420, 176, 123, 98, 74], browseConversionConfidence: 0.84 }
+    ],
+    revenueRows: [
+      { group: '对照组', payingUsers: 84, orderCount: 105, gmv: 12500, arpu: 148.8, renewalRate: 0.85, refundRate: 0.021, chargebackRate: 0.003, confidence: null },
+      { group: '实验组 A', payingUsers: 98, orderCount: 122, gmv: 15800, arpu: 161.2, renewalRate: 0.88, refundRate: 0.018, chargebackRate: 0.002, confidence: [0.98, 0.88, 0.85, 0.90, 0.78] },
+      { group: '实验组 B', payingUsers: 74, orderCount: 98, gmv: 11200, arpu: 151.4, renewalRate: 0.82, refundRate: 0.025, chargebackRate: 0.004, confidence: [0.82, 0.90, 0.75, 0.92, 0.80] }
+    ]
+  };
+  const cd = exp && normalizeCustomData(exp);
+  if (exp && exp.target === '自定义' && cd && (cd.direct.length || cd.derived.length)) {
+    data.customDataColumns = buildCustomDataColumnsMeta(exp);
+    data.customDataRows = buildMockCustomDataRows(exp, data.customDataColumns);
+  }
+  return data;
+}
+
+/** 自定义数据 Tab 行：与列顺序对齐；派生类为 0～1 小数；均值为未加单位数字 */
+function buildMockCustomDataRows(exp, columns) {
+  const n = (columns && columns.length) || 0;
+  if (exp.id === 'exp-001' && n >= 5) {
+    return [
+      { group: '对照组', values: [1240, 312, 118, 0.252, 0.384] },
+      { group: '实验组 A', values: [1198, 401, 143, 0.335, 0.476] },
+      { group: '实验组 B', values: [1260, 288, 109, 0.229, 0.341] }
+    ];
+  }
+  const groups = (exp.savedGroups && exp.savedGroups.length) ? exp.savedGroups : buildDetailGroupsForExperiment(exp);
+  return groups.map(g => ({
+    group: g.name,
+    values: Array.from({ length: n }, () => null)
+  }));
+}
+
+function formatCustomDataCellDisplay(raw, col) {
+  if (raw == null || raw === '') return '—';
+  if (!col) return String(raw);
+  if (col.kind === 'direct') {
+    if (col.aggregate === 'mean') return String(raw) + 's';
+    return String(raw);
+  }
+  if (col.kind === 'derived') {
+    const num = Number(raw);
+    if (Number.isNaN(num)) return '—';
+    if (col.derivedType === 'ratio' || col.derivedType === 'conversion' || col.derivedType === 'retention') {
+      return (num * 100).toFixed(1) + '%';
+    }
+  }
+  return String(raw);
+}
+
+function escapeHtmlText(s) {
+  if (s == null || s === '') return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function htmlDirectMetricRow(key, displayName, aggregate, readOnly) {
+  const ro = readOnly ? ' readonly class="is-readonly-input"' : '';
+  const roSel = readOnly ? ' disabled class="is-readonly-select"' : '';
+  const opts = Object.keys(CUSTOM_AGGREGATE_META).map(k =>
+    `<option value="${k}"${(aggregate || 'count') === k ? ' selected' : ''}>${CUSTOM_AGGREGATE_META[k].label}</option>`
+  ).join('');
+  return `
+    <div class="direct-metric-row custom-metric-row">
+      <input type="text" class="direct-metric-key custom-metric-key" placeholder="signup_complete" value="${escapeHtmlAttr(key || '')}"${ro} />
+      <input type="text" class="direct-metric-label custom-metric-label" placeholder="注册完成数" value="${escapeHtmlAttr(displayName || '')}"${ro} />
+      <select class="direct-metric-agg custom-metric-agg"${roSel}>${opts}</select>
+      <button type="button" class="btn-text-direct-metric-del btn-text-custom-metric-del"${readOnly ? ' disabled' : ''}>删除</button>
+    </div>
+  `;
+}
+
+function htmlDerivedMetricRowShell(readOnly) {
+  const dis = readOnly ? ' disabled' : '';
+  return `
+    <div class="derived-metric-row">
+      <div class="derived-metric-grid">
+        <span class="derived-field-label">派生类型</span>
+        <select class="derived-type-select"${dis}>
+          <option value="">请选择</option>
+          <option value="ratio">比率（数据项 ÷ 数据项）</option>
+          <option value="conversion">转化率（数据项 ÷ 分组用户数）</option>
+          <option value="retention">留存率</option>
+        </select>
+        <div class="derived-type-fields"></div>
+        <button type="button" class="btn-text-derived-metric-del"${dis}>删除</button>
+      </div>
+    </div>
+  `;
+}
+
+function getCompleteDirectListFromForm(form) {
+  const rows = form.querySelectorAll('#directMetricsRows .direct-metric-row');
+  const list = [];
+  rows.forEach(row => {
+    const key = row.querySelector('.direct-metric-key')?.value.trim();
+    const label = row.querySelector('.direct-metric-label')?.value.trim();
+    const agg = row.querySelector('.direct-metric-agg')?.value;
+    if (key && label && agg) list.push({ key, displayName: label, aggregate: agg });
+  });
+  return list;
+}
+
+function buildDirectKeyOptionsHtml(directList, selected, filterFn) {
+  const list = filterFn ? directList.filter(filterFn) : directList;
+  return list.map(d =>
+    `<option value="${escapeHtmlAttr(d.key)}"${d.key === selected ? ' selected' : ''}>${escapeHtmlText(d.displayName || d.key)}</option>`
+  ).join('');
+}
+
+function buildRetentionBasisOptionsHtml(directList, selected) {
+  const sel = selected || '';
+  const sdkSel = sel === RETENTION_BASIS_SDK_INIT_BROWSE ? ' selected' : '';
+  const sdkOpt = `<option value="${escapeHtmlAttr(RETENTION_BASIS_SDK_INIT_BROWSE)}"${sdkSel}>${escapeHtmlText(RETENTION_BASIS_SDK_INIT_BROWSE_LABEL)}</option>`;
+  const directSel = sel === RETENTION_BASIS_SDK_INIT_BROWSE ? '' : sel;
+  return sdkOpt + buildDirectKeyOptionsHtml(directList, directSel);
+}
+
+function updateRetentionHintForRow(row, n) {
+  const fields = row?.querySelector('.derived-type-fields');
+  const hint = fields?.querySelector('.derived-retention-hint');
+  if (!hint || !row) return;
+  const basis = row.querySelector('.derived-retention-basis')?.value;
+  if (basis === RETENTION_BASIS_SDK_INIT_BROWSE) {
+    hint.textContent = `基于 SDK 初始化时上报的用户标识，判断第 ${n} 日是否再次活跃；SDK 需传入用户 ID（浏览用户为 SDK 初始化口径）`;
+  } else {
+    hint.textContent = `基于用户 ID 判断首日触发该事件的用户在第 ${n} 日是否再次触发，SDK 需传入用户 ID`;
+  }
+}
+
+function renderDerivedFieldsHtml(type, der, directList, readOnly) {
+  const ro = readOnly ? ' readonly' : '';
+  const roSel = readOnly ? ' disabled' : '';
+  const d = der || {};
+  if (type === 'ratio') {
+    return `
+      <div class="derived-fields-inner derived-fields-ratio">
+        <input type="text" class="derived-display-name" placeholder="展示名称" value="${escapeHtmlAttr(d.displayName || '')}"${ro} />
+        <select class="derived-ratio-num"${roSel}>${buildDirectKeyOptionsHtml(directList, d.numeratorKey)}</select>
+        <span class="derived-slash">÷</span>
+        <select class="derived-ratio-den"${roSel}>${buildDirectKeyOptionsHtml(directList, d.denominatorKey)}</select>
+      </div>`;
+  }
+  if (type === 'conversion') {
+    return `
+      <div class="derived-fields-inner derived-fields-conversion">
+        <input type="text" class="derived-display-name" placeholder="展示名称" value="${escapeHtmlAttr(d.displayName || '')}"${ro} />
+        <select class="derived-conv-num"${roSel}>${buildDirectKeyOptionsHtml(directList, d.numeratorKey, x => x.aggregate === 'unique_users')}</select>
+        <span class="derived-fixed-den">分组总用户数</span>
+      </div>`;
+  }
+  if (type === 'retention') {
+    const period = d.retentionPeriod || 'd1';
+    const customDays = d.customDays != null ? d.customDays : 7;
+    const basis = d.basisKey || '';
+    const n = getRetentionDaysFromDerived({ type: 'retention', retentionPeriod: period, customDays });
+    const customVisible = period === 'custom' ? '' : ' style="display:none"';
+    const isSdkBrowse = basis === RETENTION_BASIS_SDK_INIT_BROWSE;
+    const hint = isSdkBrowse
+      ? `基于 SDK 初始化时上报的用户标识，判断第 ${n} 日是否再次活跃；SDK 需传入用户 ID（浏览用户为 SDK 初始化口径）`
+      : `基于用户 ID 判断首日触发该事件的用户在第 ${n} 日是否再次触发，SDK 需传入用户 ID`;
+    return `
+      <div class="derived-fields-inner derived-fields-retention">
+        <input type="text" class="derived-display-name retention-display-name-input" placeholder="展示名称" value="${escapeHtmlAttr(d.displayName || '')}"${ro} />
+        <select class="derived-retention-period"${roSel}>
+          <option value="d1"${period === 'd1' ? ' selected' : ''}>次日（1 日）</option>
+          <option value="d7"${period === 'd7' ? ' selected' : ''}>7 日</option>
+          <option value="d30"${period === 'd30' ? ' selected' : ''}>30 日</option>
+          <option value="custom"${period === 'custom' ? ' selected' : ''}>自定义天数</option>
+        </select>
+        <input type="number" class="derived-retention-custom-days" min="2" max="90" step="1" value="${escapeHtmlAttr(String(customDays))}"${customVisible}${roSel} />
+        <label class="derived-basis-label">计算依据</label>
+        <select class="derived-retention-basis"${roSel}>${buildRetentionBasisOptionsHtml(directList, basis)}</select>
+        <p class="form-hint derived-retention-hint">${escapeHtmlText(hint)}</p>
+      </div>`;
+  }
+  return '';
+}
+
+function htmlDerivedRowFromData(der, directList, readOnly) {
+  if (!der || !der.type) return htmlDerivedMetricRowShell(readOnly);
+  const shell = htmlDerivedMetricRowShell(readOnly);
+  const div = document.createElement('div');
+  div.innerHTML = shell.trim();
+  const row = div.firstElementChild;
+  const sel = row.querySelector('.derived-type-select');
+  if (sel) {
+    sel.value = der.type;
+    const fields = row.querySelector('.derived-type-fields');
+    if (fields) fields.innerHTML = renderDerivedFieldsHtml(der.type, der, directList, readOnly);
+  }
+  return row.outerHTML;
+}
+
+function collectDerivedRowsFromForm(form) {
+  const rows = form.querySelectorAll('#derivedMetricsRows .derived-metric-row');
+  const derived = [];
+  rows.forEach(row => {
+    const type = row.querySelector('.derived-type-select')?.value;
+    if (!type) return;
+    if (type === 'ratio') {
+      const displayName = row.querySelector('.derived-display-name')?.value.trim();
+      const numeratorKey = row.querySelector('.derived-ratio-num')?.value;
+      const denominatorKey = row.querySelector('.derived-ratio-den')?.value;
+      derived.push({ type: 'ratio', displayName, numeratorKey, denominatorKey });
+    } else if (type === 'conversion') {
+      const displayName = row.querySelector('.derived-display-name')?.value.trim();
+      const numeratorKey = row.querySelector('.derived-conv-num')?.value;
+      derived.push({ type: 'conversion', displayName, numeratorKey });
+    } else if (type === 'retention') {
+      const displayName = row.querySelector('.derived-display-name')?.value.trim();
+      const retentionPeriod = row.querySelector('.derived-retention-period')?.value || 'd1';
+      const basisKey = row.querySelector('.derived-retention-basis')?.value;
+      let customDays;
+      if (retentionPeriod === 'custom') {
+        const c = parseInt(String(row.querySelector('.derived-retention-custom-days')?.value || '').trim(), 10);
+        if (Number.isInteger(c)) customDays = Math.max(2, Math.min(90, c));
+      }
+      derived.push({ type: 'retention', displayName, retentionPeriod, basisKey, customDays });
+    }
+  });
+  return derived;
+}
+
+function collectCustomDataFromForm(formEl) {
+  if (!formEl || !isCustomMetricsDetailExpanded(formEl)) return { direct: [], derived: [] };
+  const directRows = formEl.querySelectorAll('#directMetricsRows .direct-metric-row');
+  const direct = [];
+  directRows.forEach(row => {
+    const key = row.querySelector('.direct-metric-key')?.value.trim();
+    const label = row.querySelector('.direct-metric-label')?.value.trim();
+    const agg = row.querySelector('.direct-metric-agg')?.value;
+    if (key && label && agg) direct.push({ key, displayName: label, aggregate: agg });
+  });
+  const derived = collectDerivedRowsFromForm(formEl).filter(d => {
+    if (d.type === 'ratio') return !!(d.displayName && d.numeratorKey && d.denominatorKey);
+    if (d.type === 'conversion') return !!(d.displayName && d.numeratorKey);
+    if (d.type === 'retention') return !!(d.displayName && d.basisKey && d.retentionPeriod);
+    return false;
+  });
+  return { direct, derived };
+}
+
+function findDerivedRefsToDirectKey(key, derivedList) {
+  const names = [];
+  (derivedList || []).forEach(d => {
+    if (!d || !d.type) return;
+    if (d.type === 'ratio' && (d.numeratorKey === key || d.denominatorKey === key)) names.push(d.displayName || '派生指标');
+    if (d.type === 'conversion' && d.numeratorKey === key) names.push(d.displayName || '派生指标');
+    if (d.type === 'retention' && d.basisKey && d.basisKey !== RETENTION_BASIS_SDK_INIT_BROWSE && d.basisKey === key) names.push(d.displayName || '派生指标');
+  });
+  return names;
+}
+
+function hasCustomDataContent(form) {
+  if (!form) return false;
+  const rowsD = form.querySelectorAll('#directMetricsRows .direct-metric-row');
+  for (let i = 0; i < rowsD.length; i++) {
+    const row = rowsD[i];
+    const key = row.querySelector('.direct-metric-key')?.value.trim();
+    const label = row.querySelector('.direct-metric-label')?.value.trim();
+    if (key || label) return true;
+  }
+  const rowsDer = form.querySelectorAll('#derivedMetricsRows .derived-metric-row');
+  for (let i = 0; i < rowsDer.length; i++) {
+    const row = rowsDer[i];
+    if (row.querySelector('.derived-type-select')?.value) return true;
+    if (row.querySelector('.derived-display-name')?.value.trim()) return true;
+  }
+  return false;
+}
+
+function refreshDirectMetricDeleteButtons(form) {
+  const scope = form || document;
+  const rows = scope.querySelectorAll('#directMetricsRows .direct-metric-row');
+  const single = rows.length <= 1;
+  rows.forEach(row => {
+    const btn = row.querySelector('.btn-text-direct-metric-del');
+    if (btn) btn.disabled = single;
+  });
+}
+
+function formAllowsEmptyDirectRowsForDerived(form) {
+  const rows = Array.from(form.querySelectorAll('#derivedMetricsRows .derived-metric-row'));
+  if (rows.length === 0) return false;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const t = row.querySelector('.derived-type-select')?.value;
+    if (!t) return false;
+    if (t === 'ratio' || t === 'conversion') return false;
+    if (t !== 'retention') return false;
+    const basis = row.querySelector('.derived-retention-basis')?.value;
+    if (basis !== RETENTION_BASIS_SDK_INIT_BROWSE) return false;
+    const dn = row.querySelector('.derived-display-name')?.value.trim();
+    const period = row.querySelector('.derived-retention-period')?.value;
+    if (!dn || !period) return false;
+    if (period === 'custom') {
+      const c = parseInt(String(row.querySelector('.derived-retention-custom-days')?.value || '').trim(), 10);
+      if (!Number.isInteger(c) || c < 2 || c > 90) return false;
+    }
+  }
+  return true;
+}
+
+function refreshDerivedAddButtonState(form) {
+  const btn = form.querySelector('#addDerivedMetricBtn');
+  if (!btn) return;
+  const list = getCompleteDirectListFromForm(form);
+  btn.disabled = false;
+  btn.title = list.length === 0
+    ? '未配置直接数据时，仅支持添加留存率并将计算依据选为「浏览用户（SDK 初始化口径）」；比率/转化率等需先添加直接数据'
+    : '';
+}
+
+function refreshDerivedSelectOptionsInForm(form) {
+  const directList = getCompleteDirectListFromForm(form);
+  form.querySelectorAll('#derivedMetricsRows .derived-metric-row').forEach(row => {
+    const type = row.querySelector('.derived-type-select')?.value;
+    if (type === 'ratio') {
+      ['derived-ratio-num', 'derived-ratio-den'].forEach(cls => {
+        const sel = row.querySelector('.' + cls);
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = buildDirectKeyOptionsHtml(directList, cur);
+      });
+    } else if (type === 'conversion') {
+      const sel = row.querySelector('.derived-conv-num');
+      if (sel) {
+        const cur = sel.value;
+        sel.innerHTML = buildDirectKeyOptionsHtml(directList, cur, x => x.aggregate === 'unique_users');
+      }
+    } else if (type === 'retention') {
+      const sel = row.querySelector('.derived-retention-basis');
+      if (sel) {
+        const cur = sel.value;
+        sel.innerHTML = buildRetentionBasisOptionsHtml(directList, cur);
+      }
+    }
+  });
+}
+
+function refreshCustomMetricDeleteButtons() {
+  const createForm = document.getElementById('createForm');
+  const editForm = document.getElementById('editExperimentForm');
+  if (createForm) refreshDirectMetricDeleteButtons(createForm);
+  if (editForm) refreshDirectMetricDeleteButtons(editForm);
+}
+
+/** 兼容旧逻辑：仅直接指标列表 */
+function collectCustomMetricsFromForm(formEl) {
+  return collectCustomDataFromForm(formEl).direct;
+}
+
+function isCustomMetricsDetailExpanded(formEl) {
+  if (!formEl) return false;
+  const d = formEl.querySelector('#customMetricsDetailWrap');
+  return !!(d && !d.hidden && d.style.display !== 'none');
+}
+
+const CUSTOM_DATA_HINT_POPOVER = `
+                <span class="revenue-hint-wrap custom-metrics-info-hint" tabindex="0" aria-label="自定义数据说明">
+                  <span class="revenue-hint-icon" aria-hidden="true">?</span>
+                  <span class="revenue-hint-popover revenue-hint-popover-wide" role="tooltip">
+                    <p class="revenue-hint-popover-body"><strong>何时添加</strong>：当您需要把<strong>商户站内业务事件</strong>（如注册完成、关键按钮点击、停留时长等）与实验分组关联统计、并与默认指标一并查看时，可点击左侧展开配置；前端通过 SDK <code>subotiz.track(key, value)</code> 上报后，后台按实验分组聚合展示在「自定义数据」模块。</p>
+                    <p class="revenue-hint-popover-body" style="margin-top:10px;"><strong>不添加自定义数据时</strong>：实验数据 Tab 仍展示 Subotiz 侧默认数据，包括<strong>转化数据</strong>（浏览与各环节转化漏斗）与<strong>收入与风险数据</strong>（GMV、ARPU、续费率、退款率等），来源为平台侧埋点与账单数据。</p>
+                  </span>
+                </span>`;
+
+function buildCustomDataDetailInnerHtml(exp, readOnly) {
+  const cd = normalizeCustomData(exp);
+  const directRows = cd.direct.length
+    ? cd.direct.map(m => htmlDirectMetricRow(m.key, m.displayName, m.aggregate, readOnly)).join('')
+    : '';
+  const derivedRows = (cd.derived || []).map(der => htmlDerivedRowFromData(der, cd.direct, readOnly)).join('');
+  return `
+        <div class="custom-metrics-detail-head">
+          <div class="custom-metrics-detail-head-left">
+            <span class="form-label custom-metrics-section-label">自定义数据配置</span>
+            ${CUSTOM_DATA_HINT_POPOVER}
+          </div>
+          ${readOnly ? '' : '<button type="button" class="btn-link-text btn-link-text-subtle" id="removeCustomMetricsBtn">移除自定义数据</button>'}
+        </div>
+        <div class="custom-data-subsection">
+          <div class="custom-data-subsection-title">直接数据</div>
+          <p class="form-hint">商户通过 SDK 调用 subotiz.track(key, value) 上报，系统按聚合方式汇总后展示在数据 Tab。</p>
+          <div class="custom-metrics-table-wrap direct-metrics-table-wrap">
+            <div class="custom-metrics-table-header direct-metrics-table-header">
+              <span>数据 Key</span>
+              <span>展示名称</span>
+              <span>聚合方式</span>
+              <span class="custom-metrics-th-action"></span>
+            </div>
+            <div id="directMetricsRows">${directRows}</div>
+          </div>
+          ${readOnly ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="addDirectMetricBtn">+ 添加直接数据</button>'}
+        </div>
+        <div class="custom-data-subsection">
+          <div class="custom-data-subsection-title">派生数据</div>
+          <p class="form-hint">基于已配置的直接数据进行二次计算，无需 SDK 额外上报。</p>
+          <div id="derivedMetricsRows">${derivedRows}</div>
+          ${readOnly ? '' : '<button type="button" class="btn btn-ghost btn-sm" id="addDerivedMetricBtn" title="">+ 添加派生数据</button>'}
+        </div>`;
+}
+
+function buildEditCustomMetricsSectionHtml(exp, ttSelectVal, restricted) {
+  if (ttSelectVal !== 'custom') return '';
+  const cd = normalizeCustomData(exp);
+  const hasCfg = cd.direct.length > 0 || (cd.derived && cd.derived.length > 0);
+  if (restricted) {
+    if (!hasCfg) return '';
+    return `
+      <div id="customMetricsOptionalWrap" class="form-group custom-metrics-optional-wrap">
+        ${buildCustomDataDetailInnerHtml(exp, true)}
+      </div>`;
+  }
+  return `
+    <div id="customMetricsOptionalWrap" class="form-group custom-metrics-optional-wrap">
+      <div id="customMetricsCollapsedRow" class="custom-metrics-collapsed-row" style="display:${hasCfg ? 'none' : ''};">
+        <button type="button" class="btn-link-text btn-link-text-subtle" id="toggleCustomMetricsBtn">添加自定义数据</button>
+        ${CUSTOM_DATA_HINT_POPOVER}
+      </div>
+      <div id="customMetricsDetailWrap" class="custom-metrics-detail-wrap" style="display:${hasCfg ? 'block' : 'none'};" ${hasCfg ? '' : 'hidden'}>
+        ${buildCustomDataDetailInnerHtml(exp, false)}
+      </div>
+    </div>`;
+}
+
+function expandCustomMetricsSection(form) {
+  const detail = form.querySelector('#customMetricsDetailWrap');
+  const collapsed = form.querySelector('#customMetricsCollapsedRow');
+  if (collapsed) collapsed.style.display = 'none';
+  if (detail) {
+    detail.style.display = 'block';
+    detail.hidden = false;
+  }
+  const directHost = form.querySelector('#directMetricsRows');
+  if (directHost && !directHost.querySelector('.direct-metric-row')) {
+    directHost.innerHTML = htmlDirectMetricRow('', '', 'count', false);
+  }
+  refreshDirectMetricDeleteButtons(form);
+  refreshDerivedAddButtonState(form);
+  refreshDerivedSelectOptionsInForm(form);
+}
+
+function collapseCustomMetricsSection(form) {
+  const detail = form.querySelector('#customMetricsDetailWrap');
+  const collapsed = form.querySelector('#customMetricsCollapsedRow');
+  if (detail) {
+    detail.style.display = 'none';
+    detail.hidden = true;
+  }
+  if (collapsed) collapsed.style.display = '';
+  const directHost = form.querySelector('#directMetricsRows');
+  if (directHost) directHost.innerHTML = '';
+  const derivedHost = form.querySelector('#derivedMetricsRows');
+  if (derivedHost) derivedHost.innerHTML = '';
+  (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+}
+
+function showCustomDataCollapseConfirmModal(onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'customDataCollapseOverlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:400px;">
+      <div class="modal-header"><span class="modal-title">提示</span></div>
+      <div class="modal-body"><p style="margin:0;">收起后已填写的自定义数据配置将清空，是否继续？</p></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="customDataCollapseCancel">取消</button>
+        <button type="button" class="btn btn-primary" id="customDataCollapseOk">继续</button>
+      </div>
+    </div>
+  `;
+  const remove = () => { overlay.remove(); };
+  overlay.querySelector('#customDataCollapseCancel').addEventListener('click', remove);
+  overlay.querySelector('#customDataCollapseOk').addEventListener('click', () => {
+    remove();
+    onConfirm();
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) remove(); });
+  document.body.appendChild(overlay);
+}
+
+function bindCustomMetricsInteractions(formSelector) {
+  const form = typeof formSelector === 'string' ? document.querySelector(formSelector) : formSelector;
+  if (!form || form._customMetricsBound) return;
+  form._customMetricsBound = true;
+
+  form.addEventListener('click', (e) => {
+    const toggleBtn = e.target.closest('#toggleCustomMetricsBtn');
+    if (toggleBtn && form.contains(toggleBtn)) {
+      if (!form.querySelector('#customMetricsDetailWrap')) return;
+      expandCustomMetricsSection(form);
+      return;
+    }
+    const removeBtn = e.target.closest('#removeCustomMetricsBtn');
+    if (removeBtn && form.contains(removeBtn)) {
+      if (!hasCustomDataContent(form)) {
+        collapseCustomMetricsSection(form);
+      } else {
+        showCustomDataCollapseConfirmModal(() => collapseCustomMetricsSection(form));
+      }
+      return;
+    }
+    const addDirect = e.target.closest('#addDirectMetricBtn');
+    if (addDirect && form.contains(addDirect) && !addDirect.disabled) {
+      form.querySelector('#directMetricsRows')?.insertAdjacentHTML('beforeend', htmlDirectMetricRow('', '', 'count', false));
+      refreshDirectMetricDeleteButtons(form);
+      refreshDerivedAddButtonState(form);
+      refreshDerivedSelectOptionsInForm(form);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+      return;
+    }
+    const addDerived = e.target.closest('#addDerivedMetricBtn');
+    if (addDerived && form.contains(addDerived) && !addDerived.disabled) {
+      form.querySelector('#derivedMetricsRows')?.insertAdjacentHTML('beforeend', htmlDerivedMetricRowShell(false));
+      refreshDerivedAddButtonState(form);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+      return;
+    }
+    const delDirect = e.target.closest('.btn-text-direct-metric-del');
+    if (delDirect && form.contains(delDirect) && !delDirect.disabled) {
+      const row = delDirect.closest('.direct-metric-row');
+      const key = row?.querySelector('.direct-metric-key')?.value.trim();
+      const derived = collectDerivedRowsFromForm(form);
+      if (key) {
+        const refs = findDerivedRefsToDirectKey(key, derived);
+        if (refs.length) {
+          const name = refs[0];
+          alert(`该数据已被派生指标「${name}」引用，请先删除对应派生指标`);
+          return;
+        }
+      }
+      row?.remove();
+      refreshDirectMetricDeleteButtons(form);
+      refreshDerivedAddButtonState(form);
+      refreshDerivedSelectOptionsInForm(form);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+      return;
+    }
+    const delDerived = e.target.closest('.btn-text-derived-metric-del');
+    if (delDerived && form.contains(delDerived) && !delDerived.disabled) {
+      delDerived.closest('.derived-metric-row')?.remove();
+      refreshDerivedAddButtonState(form);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+    }
+  });
+
+  form.addEventListener('change', (e) => {
+    const typeSel = e.target.closest('.derived-type-select');
+    if (typeSel && form.contains(typeSel)) {
+      const row = typeSel.closest('.derived-metric-row');
+      const fields = row?.querySelector('.derived-type-fields');
+      const type = typeSel.value;
+      if (fields) {
+        const directList = getCompleteDirectListFromForm(form);
+        fields.innerHTML = type ? renderDerivedFieldsHtml(type, {}, directList, false) : '';
+        if (type === 'retention') {
+          const inp = fields.querySelector('.retention-display-name-input');
+          const der = { type: 'retention', retentionPeriod: 'd1' };
+          if (inp) inp.value = defaultRetentionDisplayName(der);
+        }
+      }
+      refreshDerivedAddButtonState(form);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+      return;
+    }
+    const rp = e.target.closest('.derived-retention-period');
+    if (rp && form.contains(rp)) {
+      const row = rp.closest('.derived-metric-row');
+      const fields = row?.querySelector('.derived-type-fields');
+      const period = rp.value;
+      const customInp = fields?.querySelector('.derived-retention-custom-days');
+      if (customInp) {
+        customInp.style.display = period === 'custom' ? '' : 'none';
+      }
+      const der = { type: 'retention', retentionPeriod: period, customDays: customInp ? parseInt(customInp.value, 10) : undefined };
+      const nameInp = fields?.querySelector('.retention-display-name-input');
+      if (nameInp && document.activeElement !== nameInp) {
+        nameInp.value = defaultRetentionDisplayName(der);
+      }
+      const n = getRetentionDaysFromDerived(der);
+      updateRetentionHintForRow(row, n);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+      return;
+    }
+    const basisSel = e.target.closest('.derived-retention-basis');
+    if (basisSel && form.contains(basisSel)) {
+      const row = basisSel.closest('.derived-metric-row');
+      const fields = row?.querySelector('.derived-type-fields');
+      const period = row?.querySelector('.derived-retention-period')?.value || 'd1';
+      const customEl = row?.querySelector('.derived-retention-custom-days');
+      const der = {
+        type: 'retention',
+        retentionPeriod: period,
+        customDays: period === 'custom' && customEl ? parseInt(String(customEl.value || '').trim(), 10) : undefined
+      };
+      const n = getRetentionDaysFromDerived(der);
+      updateRetentionHintForRow(row, n);
+      refreshDerivedAddButtonState(form);
+      (form.id === 'createForm' ? clearCreateFormErrors : clearEditFormErrors)();
+      return;
+    }
+    const directInp = e.target.closest('#directMetricsRows .direct-metric-key, #directMetricsRows .direct-metric-label, #directMetricsRows .direct-metric-agg');
+    if (directInp && form.contains(directInp)) {
+      refreshDerivedSelectOptionsInForm(form);
+      refreshDerivedAddButtonState(form);
+    }
+  });
+
+  form.addEventListener('input', (e) => {
+    const customDays = e.target.closest('.derived-retention-custom-days');
+    if (customDays && form.contains(customDays)) {
+      const row = customDays.closest('.derived-metric-row');
+      const fields = row?.querySelector('.derived-type-fields');
+      const period = row?.querySelector('.derived-retention-period')?.value;
+      const der = { type: 'retention', retentionPeriod: period || 'custom', customDays: parseInt(customDays.value, 10) };
+      const nameInp = fields?.querySelector('.retention-display-name-input');
+      if (period === 'custom' && nameInp && document.activeElement !== nameInp) {
+        nameInp.value = defaultRetentionDisplayName(der);
+      }
+      const n = getRetentionDaysFromDerived(der);
+      updateRetentionHintForRow(row, n);
+    }
+    if (e.target.closest('#directMetricsRows .direct-metric-key, #directMetricsRows .direct-metric-label, #directMetricsRows .direct-metric-agg')) {
+      refreshDerivedSelectOptionsInForm(form);
+      refreshDerivedAddButtonState(form);
+    }
+  });
+}
 
 // 根据 values[浏览用户, 发起结账用户, 提交订单用户, 完成支付操作用户, 支付成功用户] 计算各转化率
 function getConversionRates(values) {
@@ -763,6 +1514,15 @@ function renderCreateExperiment() {
             <label class="form-label">实验目标与方案描述</label>
             <textarea name="goal" placeholder="填写您做测试的目的，并且说明下对照组和每个实验组的不同逻辑 ，选填；" rows="3"></textarea>
           </div>
+          <div id="customMetricsOptionalWrap" class="form-group custom-metrics-optional-wrap" style="display:none;">
+            <div id="customMetricsCollapsedRow" class="custom-metrics-collapsed-row">
+              <button type="button" class="btn-link-text btn-link-text-subtle" id="toggleCustomMetricsBtn">添加自定义数据</button>
+              ${CUSTOM_DATA_HINT_POPOVER}
+            </div>
+            <div id="customMetricsDetailWrap" class="custom-metrics-detail-wrap" style="display:none;" hidden>
+              ${buildCustomDataDetailInnerHtml({ customData: { direct: [], derived: [] } }, false)}
+            </div>
+          </div>
           <div class="action-bar" style="margin-top:24px;">
             <button type="submit" class="btn btn-primary">保存为草稿</button>
             <a href="#/experiments" class="btn btn-secondary">取消</a>
@@ -898,6 +1658,7 @@ function renderEditExperiment(id) {
             <textarea name="goal" placeholder="填写您做测试的目的，并且说明下对照组和每个实验组的不同逻辑 ，选填；" rows="3"${restricted ? ' readonly class="is-readonly-textarea"' : ''}>${escTextareaContent(detail.goal || '')}</textarea>
             ${restricted ? '<p class="form-hint">运行中或已暂停时不可修改实验目标与方案描述。</p>' : ''}
           </div>
+          ${buildEditCustomMetricsSectionHtml(exp, ttSelectVal, restricted)}
           <div class="action-bar" style="margin-top:24px;">
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="#/experiments/${escapeHtmlAttr(id)}" class="btn btn-secondary">取消</a>
@@ -925,10 +1686,67 @@ function placeFirstEditFormErrorMessage(firstEl) {
   p.className = 'form-hint create-form-field-error-msg';
   p.textContent = '请完成此项配置';
   const trafficRow = firstEl.closest('.traffic-row');
+  const customMetricRow = firstEl.closest('.custom-metric-row');
+  const derivedMetricRow = firstEl.closest('.derived-metric-row');
   const endLine = firstEl.closest('.end-config-line');
   if (trafficRow) trafficRow.insertAdjacentElement('afterend', p);
+  else if (derivedMetricRow) derivedMetricRow.insertAdjacentElement('afterend', p);
+  else if (customMetricRow) customMetricRow.insertAdjacentElement('afterend', p);
   else if (endLine) endLine.insertAdjacentElement('afterend', p);
   else firstEl.insertAdjacentElement('afterend', p);
+}
+
+function validateCustomDataExpanded(form) {
+  const errorEls = [];
+  if (!form || !isCustomMetricsDetailExpanded(form)) return errorEls;
+  const directRows = form.querySelectorAll('#directMetricsRows .direct-metric-row');
+  let completeDirect = 0;
+  directRows.forEach(row => {
+    const keyEl = row.querySelector('.direct-metric-key');
+    const labelEl = row.querySelector('.direct-metric-label');
+    const aggEl = row.querySelector('.direct-metric-agg');
+    const key = keyEl && String(keyEl.value || '').trim();
+    const label = labelEl && String(labelEl.value || '').trim();
+    const agg = aggEl && aggEl.value;
+    if (!key && !label && !agg) return;
+    if (!key) errorEls.push(keyEl);
+    else if (!label) errorEls.push(labelEl);
+    else if (!agg) errorEls.push(aggEl);
+    else completeDirect++;
+  });
+  if (completeDirect === 0 && !formAllowsEmptyDirectRowsForDerived(form)) {
+    const fk = form.querySelector('#directMetricsRows .direct-metric-key');
+    if (fk) errorEls.push(fk);
+  }
+  form.querySelectorAll('#derivedMetricsRows .derived-metric-row').forEach(row => {
+    const type = row.querySelector('.derived-type-select')?.value;
+    if (!type) return;
+    if (type === 'ratio') {
+      const dn = row.querySelector('.derived-display-name');
+      const nu = row.querySelector('.derived-ratio-num');
+      const de = row.querySelector('.derived-ratio-den');
+      if (!String(dn?.value || '').trim()) errorEls.push(dn);
+      if (!nu?.value) errorEls.push(nu);
+      if (!de?.value) errorEls.push(de);
+    } else if (type === 'conversion') {
+      const dn = row.querySelector('.derived-display-name');
+      const nu = row.querySelector('.derived-conv-num');
+      if (!String(dn?.value || '').trim()) errorEls.push(dn);
+      if (!nu?.value) errorEls.push(nu);
+    } else if (type === 'retention') {
+      const dn = row.querySelector('.derived-display-name');
+      const basis = row.querySelector('.derived-retention-basis');
+      const period = row.querySelector('.derived-retention-period')?.value;
+      const customEl = row.querySelector('.derived-retention-custom-days');
+      if (!String(dn?.value || '').trim()) errorEls.push(dn);
+      if (!basis?.value) errorEls.push(basis);
+      if (period === 'custom') {
+        const c = parseInt(String(customEl?.value || '').trim(), 10);
+        if (!Number.isInteger(c) || c < 2 || c > 90) errorEls.push(customEl);
+      }
+    }
+  });
+  return errorEls;
 }
 
 function validateEditForm(restricted) {
@@ -974,6 +1792,11 @@ function validateEditForm(restricted) {
         const scopeRules = document.getElementById('scopeRules');
         if (scopeRules) errorEls.push(scopeRules);
       }
+    }
+    const ttCustom = document.getElementById('targetType');
+    const editFormEl = document.getElementById('editExperimentForm');
+    if (ttCustom && ttCustom.value === 'custom' && isCustomMetricsDetailExpanded(editFormEl)) {
+      validateCustomDataExpanded(editFormEl).forEach(el => errorEls.push(el));
     }
   }
 
@@ -1063,6 +1886,15 @@ function applyEditSave(id) {
   if (!restricted) {
     const tt = document.getElementById('targetType')?.value;
     exp.target = tt === 'pricing' ? '定价' : tt === 'price_table' ? '价格表' : '自定义';
+    if (tt === 'custom') {
+      const cd = collectCustomDataFromForm(form);
+      if (cd.direct.length || cd.derived.length) exp.customData = cd;
+      else delete exp.customData;
+      delete exp.customMetrics;
+    } else {
+      delete exp.customData;
+      delete exp.customMetrics;
+    }
     const us = document.getElementById('userScope')?.value;
     exp.userScopeSaved = us === 'all' ? '全部' : '定向';
     if (us === 'targeted' && typeof window.__editScopeList !== 'undefined' && window.__editScopeList) {
@@ -1091,6 +1923,8 @@ function captureEditFormSnapshot() {
     parts.push(document.getElementById('targetType')?.value || '');
     parts.push(document.getElementById('userScope')?.value || '');
     parts.push(JSON.stringify(window.__editScopeList || []));
+    parts.push(isCustomMetricsDetailExpanded(form) ? '1' : '0');
+    parts.push(JSON.stringify(collectCustomDataFromForm(form)));
   }
   parts.push(JSON.stringify(serializeEditFormGroups()));
   return parts.join('\x01');
@@ -1120,6 +1954,8 @@ function createFormHasContent() {
   for (let i = 0; i < targetCells.length; i++) {
     if (targetCells[i].value && targetCells[i].value.trim()) return true;
   }
+  const cf = document.getElementById('createForm');
+  if (isCustomMetricsDetailExpanded(cf) && hasCustomDataContent(cf)) return true;
   return false;
 }
 
@@ -1241,9 +2077,15 @@ function placeFirstCreateFormErrorMessage(firstEl) {
   p.className = 'form-hint create-form-field-error-msg';
   p.textContent = '请完成此项配置';
   const trafficRow = firstEl.closest('.traffic-row');
+  const derivedMetricRow = firstEl.closest('.derived-metric-row');
+  const customMetricRow = firstEl.closest('.custom-metric-row');
   const endLine = firstEl.closest('.end-config-line');
   if (trafficRow) {
     trafficRow.insertAdjacentElement('afterend', p);
+  } else if (derivedMetricRow) {
+    derivedMetricRow.insertAdjacentElement('afterend', p);
+  } else if (customMetricRow) {
+    customMetricRow.insertAdjacentElement('afterend', p);
   } else if (endLine) {
     endLine.insertAdjacentElement('afterend', p);
   } else {
@@ -1291,6 +2133,12 @@ function validateCreateForm() {
       const scopeRules = document.getElementById('scopeRules');
       if (scopeRules) errorEls.push(scopeRules);
     }
+  }
+
+  const targetTypeForCustom = document.getElementById('targetType');
+  const createFormEl = document.getElementById('createForm');
+  if (targetTypeForCustom && targetTypeForCustom.value === 'custom' && isCustomMetricsDetailExpanded(createFormEl)) {
+    validateCustomDataExpanded(createFormEl).forEach(el => errorEls.push(el));
   }
 
   document.querySelectorAll('#trafficGroups .traffic-row').forEach(row => {
@@ -1344,6 +2192,23 @@ function bindCreateFormEvents() {
     const v = targetType?.value || '';
     if (controlGroupHint) controlGroupHint.style.display = (v === 'pricing' || v === 'price_table') ? 'block' : 'none';
     if (customTargetHintWrap) customTargetHintWrap.style.display = v === 'custom' ? 'block' : 'none';
+    const optWrap = document.getElementById('customMetricsOptionalWrap');
+    const detailWrap = document.getElementById('customMetricsDetailWrap');
+    const collapsedRow = document.getElementById('customMetricsCollapsedRow');
+    const directMetricsRows = document.getElementById('directMetricsRows');
+    const derivedMetricsRows = document.getElementById('derivedMetricsRows');
+    if (optWrap) {
+      optWrap.style.display = v === 'custom' ? 'block' : 'none';
+      if (v !== 'custom') {
+        if (detailWrap) {
+          detailWrap.style.display = 'none';
+          detailWrap.hidden = true;
+        }
+        if (collapsedRow) collapsedRow.style.display = '';
+        if (directMetricsRows) directMetricsRows.innerHTML = '';
+        if (derivedMetricsRows) derivedMetricsRows.innerHTML = '';
+      }
+    }
     const cells = document.querySelectorAll('#trafficGroups .target-cell');
     if (v === 'custom') {
       const defaultValues = ['value1', 'value2'];
@@ -1526,6 +2391,13 @@ function bindCreateFormEvents() {
       location.hash = '#/experiments';
     }
   });
+  bindCustomMetricsInteractions(document.getElementById('createForm'));
+  const _cf = document.getElementById('createForm');
+  if (_cf) {
+    refreshDerivedAddButtonState(_cf);
+    refreshDirectMetricDeleteButtons(_cf);
+  }
+  updateTargetColumn();
 }
 
 function bindEditFormEvents(id) {
@@ -1562,6 +2434,23 @@ function bindEditFormEvents(id) {
     const v = targetType?.value || '';
     if (controlGroupHint) controlGroupHint.style.display = (v === 'pricing' || v === 'price_table') ? 'block' : 'none';
     if (customTargetHintWrap) customTargetHintWrap.style.display = v === 'custom' ? 'block' : 'none';
+    const editOptWrap = document.querySelector('#editExperimentForm #customMetricsOptionalWrap');
+    const editDetailWrap = document.querySelector('#editExperimentForm #customMetricsDetailWrap');
+    const editCollapsedRow = document.querySelector('#editExperimentForm #customMetricsCollapsedRow');
+    const editDirectRows = document.querySelector('#editExperimentForm #directMetricsRows');
+    const editDerivedRows = document.querySelector('#editExperimentForm #derivedMetricsRows');
+    if (editOptWrap && !restricted) {
+      editOptWrap.style.display = v === 'custom' ? 'block' : 'none';
+      if (v !== 'custom') {
+        if (editDetailWrap) {
+          editDetailWrap.style.display = 'none';
+          editDetailWrap.hidden = true;
+        }
+        if (editCollapsedRow) editCollapsedRow.style.display = '';
+        if (editDirectRows) editDirectRows.innerHTML = '';
+        if (editDerivedRows) editDerivedRows.innerHTML = '';
+      }
+    }
     const cells = document.querySelectorAll('#editExperimentForm #trafficGroups .target-cell');
     if (v === 'custom') {
       const defaultValues = ['value1', 'value2'];
@@ -1726,6 +2615,12 @@ function bindEditFormEvents(id) {
       location.hash = '#/experiments/' + id;
     }
   });
+  bindCustomMetricsInteractions(form);
+  updateTargetColumn();
+  refreshDerivedAddButtonState(form);
+  refreshDirectMetricDeleteButtons(form);
+  refreshDerivedSelectOptionsInForm(form);
+  refreshCustomMetricDeleteButtons();
   window.__editFormInitialSnapshot = captureEditFormSnapshot();
 }
 
@@ -1871,6 +2766,56 @@ function renderDetailTab(detail) {
   `;
 }
 
+function renderCustomDataModuleHtml(data) {
+  const columns = data.customDataColumns || [];
+  const rows = data.customDataRows || [];
+  if (!columns.length || !rows.length) return '';
+  const controlVals = rows[0].values || [];
+  let thead = '<th class="group-name">实验组</th>';
+  columns.forEach(col => {
+    const label = escapeHtmlAttr(col.displayName || '');
+    const tipPlain = col.tooltip || '';
+    const tipBody = escapeHtmlText(tipPlain);
+    thead += `<th><span class="revenue-hint-wrap custom-data-col-hint-wrap" tabindex="0" aria-label="${escapeHtmlAttr(tipPlain)}">
+      <span class="custom-data-th-label">${label}</span>
+      <span class="revenue-hint-popover" role="tooltip"><p class="revenue-hint-popover-body">${tipBody}</p></span>
+    </span></th>`;
+  });
+  let tbody = '';
+  rows.forEach((row, ri) => {
+    const isControl = ri === 0;
+    let cells = `<td class="group-name">${escapeHtmlAttr(row.group)}</td>`;
+    columns.forEach((col, mi) => {
+      const raw = row.values[mi];
+      const c0 = controlVals[mi];
+      const display = formatCustomDataCellDisplay(raw, col);
+      let extra = '';
+      if (!isControl && raw != null && c0 != null) {
+        const cur = Number(raw);
+        const base = Number(c0);
+        if (Number.isFinite(cur) && Number.isFinite(base)) {
+          const cmp = getCompare(cur, base);
+          if (cmp && cmp.direction !== 'same') {
+            extra = `<span class="compare-text compare-${cmp.direction}">${cmp.text}</span>`;
+          }
+        }
+      }
+      cells += `<td class="custom-data-cell conversion-cell"><div class="custom-data-val">${display}</div>${extra ? `<div class="custom-data-delta">${extra}</div>` : ''}</td>`;
+    });
+    tbody += `<tr>${cells}</tr>`;
+  });
+  return `
+    <h3 class="data-module-title">自定义数据</h3>
+    <div class="data-table-card">
+      <table class="data-table custom-data-table">
+        <thead><tr>${thead}</tr></thead>
+        <tbody>${tbody}</tbody>
+      </table>
+    </div>
+    <p class="form-hint" style="margin-top:12px;">直接数据来自商户 SDK 上报，派生数据由系统基于直接数据计算得出；实验组数值下方为相对对照组的变化百分比。</p>
+  `;
+}
+
 function renderDataTab(data) {
   const labels = data.metricLabels || [];
   const convLabels = data.conversionLabels || [];
@@ -1995,6 +2940,7 @@ function renderDataTab(data) {
       </table>
     </div>
     <p class="form-hint" style="margin-top:12px;">各指标为实验周期内该分组的汇总或比率；实验组下方为相对对照组的变化百分比。支付用户数、支付订单数不展示置信度；其余指标在变化百分比下展示置信度。</p>
+    ${renderCustomDataModuleHtml(data)}
     <div class="ai-insight-card">
       <div class="ai-insight-header">
         <span class="ai-insight-icon">◇</span>

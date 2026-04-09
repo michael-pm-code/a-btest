@@ -466,6 +466,229 @@ th { font-weight: 500; color: var(--text-muted); background: #f8fafc; }
   display: block;
 }
 
+/* 创建/编辑实验：自定义数据指标（可选） */
+.custom-metrics-optional-wrap { margin-top: 12px; }
+.custom-metrics-collapsed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+/* 折叠态主按钮与「?」从左排布，勿使用 subtle 的 margin-left:auto 顶到右侧 */
+.custom-metrics-collapsed-row .btn-link-text-subtle {
+  margin-left: 0;
+}
+.custom-metrics-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.custom-metrics-detail-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.custom-metrics-section-label.form-label {
+  margin: 0;
+  display: inline;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.btn-link-text {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn-link-text:hover { text-decoration: underline; }
+.btn-link-text-subtle {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.btn-link-text-subtle:hover {
+  color: var(--text);
+}
+.custom-metrics-info-hint { margin-top: 0 !important; }
+.revenue-hint-popover-wide {
+  width: min(400px, calc(100vw - 48px));
+}
+.revenue-hint-popover-wide .revenue-hint-popover-body code {
+  font-size: 12px;
+  padding: 2px 6px;
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+.custom-metrics-detail-wrap { margin-top: 0; }
+.custom-metrics-detail-wrap > .form-hint { margin-top: 8px; }
+.custom-data-subsection { margin-top: 16px; }
+.custom-data-subsection:first-of-type { margin-top: 0; }
+.custom-data-subsection-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.custom-data-subsection > .form-hint { margin-top: 0; }
+.derived-metric-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-top: 10px;
+  background: #fafbfc;
+}
+.derived-metric-grid {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+}
+.derived-field-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.derived-type-select { min-width: 0; font-size: 14px; }
+.derived-type-fields { grid-column: 1 / -1; }
+.derived-fields-inner {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px 12px;
+  align-items: center;
+}
+.derived-fields-inner .derived-display-name { grid-column: 1 / -1; max-width: 320px; }
+.derived-fields-ratio .derived-slash { color: var(--text-muted); padding: 0 4px; }
+.derived-fixed-den {
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--bg, #f6f8fa);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.derived-fields-retention .derived-basis-label {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.derived-fields-retention .derived-retention-hint { grid-column: 1 / -1; margin-top: 0; }
+.btn-text-derived-metric-del {
+  background: none;
+  border: none;
+  color: var(--danger, #dc3545);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  text-align: right;
+  justify-self: end;
+  white-space: nowrap;
+}
+.btn-text-derived-metric-del:hover:not(:disabled) { text-decoration: underline; }
+.btn-text-derived-metric-del:disabled { opacity: 0.35; cursor: not-allowed; }
+.custom-metrics-detail-wrap #addDirectMetricBtn,
+.custom-metrics-detail-wrap #addDerivedMetricBtn { margin-top: 10px; }
+.custom-metrics-detail-wrap #addDerivedMetricBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+.custom-metrics-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.custom-metrics-table-header,
+.custom-metric-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(150px, 1fr) 64px;
+  gap: 0 12px;
+  align-items: center;
+  padding: 10px 12px;
+}
+.custom-metrics-table-header {
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.custom-metric-row { border-top: 1px solid var(--border); }
+.custom-metric-row input,
+.custom-metric-row select { width: 100%; min-width: 0; font-size: 14px; }
+.custom-metrics-detail-wrap #addCustomMetricBtn { margin-top: 10px; }
+.btn-text-custom-metric-del {
+  background: none;
+  border: none;
+  color: var(--danger, #dc3545);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+}
+.btn-text-custom-metric-del:hover:not(:disabled) { text-decoration: underline; }
+.btn-text-custom-metric-del:disabled { opacity: 0.35; cursor: not-allowed; }
+input.is-readonly-input {
+  background: var(--bg-muted, #f4f4f5);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* 实验数据：自定义数据表 */
+.data-table.custom-data-table th { vertical-align: bottom; }
+.data-table.custom-data-table .custom-data-th-name { font-weight: 500; }
+.data-table.custom-data-table thead .custom-data-col-hint-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: bottom;
+  max-width: 100%;
+  cursor: help;
+}
+.data-table.custom-data-table thead .custom-data-col-hint-wrap .custom-data-th-label {
+  color: var(--text-muted);
+  border-bottom: 1px dashed var(--text-muted);
+  font-weight: 500;
+}
+.data-table.custom-data-table thead .custom-data-col-hint-wrap .revenue-hint-popover {
+  display: none;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-left: 0;
+  margin-top: 6px;
+}
+.data-table.custom-data-table thead .custom-data-col-hint-wrap:hover .revenue-hint-popover,
+.data-table.custom-data-table thead .custom-data-col-hint-wrap:focus .revenue-hint-popover,
+.data-table.custom-data-table thead .custom-data-col-hint-wrap:focus-within .revenue-hint-popover {
+  display: block;
+}
+.data-table.custom-data-table .custom-data-th-agg {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-left: 2px;
+  vertical-align: super;
+}
+.data-table.custom-data-table .custom-data-val { font-weight: 500; }
+.data-table.custom-data-table .custom-data-delta .compare-text {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  margin-top: 4px;
+}
+.data-table.custom-data-table .custom-data-delta .compare-text.compare-up { color: var(--success); }
+.data-table.custom-data-table .custom-data-delta .compare-text.compare-down { color: var(--danger); }
+
 /* AI 数据解读 */
 .ai-insight-card { margin-top: 28px; padding: 20px 24px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid var(--border); border-radius: var(--radius); }
 .ai-insight-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-weight: 600; font-size: 15px; color: var(--text); }
