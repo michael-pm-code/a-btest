@@ -166,10 +166,25 @@ const getExperimentDetail = (id) => {
     const list = [];
     for (let i = 1; i <= 25; i++) {
       const n = String(i).padStart(3, '0');
+      const base = ['abc', 'def', 'ghi', 'jkl', 'mno'][(i - 1) % 5] + n;
+      const experimentUid = 'expuid_' + base;
+      let customerIds = ['cust_' + n];
+      let merchantUids = ['muid_' + n + '_' + (1000 + i)];
+      if (i % 4 === 0) {
+        customerIds = ['cust_' + n, 'cust_legacy_' + n, 'cust_merge_' + n];
+      }
+      if (i % 5 === 0) {
+        merchantUids = ['muid_' + n + '_' + (1000 + i), 'muid_shop2_' + n];
+      }
+      if (i === 7) {
+        customerIds = ['cust_007', 'cust_backup_007', 'cust_staging_007'];
+        merchantUids = ['muid_007', 'muid_alt_007'];
+      }
       list.push({
-        uid: 'usr_' + n,
-        clientId: 'cid_' + ['abc', 'def', 'ghi', 'jkl', 'mno'][(i - 1) % 5] + n,
-        merchantCustomerId: 'mc_' + n + '_' + (1000 + i),
+        rowKey: 'usr_' + n,
+        experimentUid,
+        customerIds,
+        merchantUids,
         ip: '203.0.113.' + String((i % 200) + 1),
         group: groups[(i - 1) % 3],
         assignedAt: '2025-03-10 14:' + String(30 + (i % 30)).padStart(2, '0')
@@ -367,6 +382,39 @@ function escapeHtmlText(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function pickMultiValueDisplayIndex(values, searchLower) {
+  if (!values || values.length === 0) return 0;
+  const sl = String(searchLower || '').trim().toLowerCase();
+  if (!sl) return 0;
+  const i = values.findIndex(v => String(v).toLowerCase().includes(sl));
+  return i >= 0 ? i : 0;
+}
+
+/** customer id / merchant uid 多值：单值纯文本，多值用下拉；搜索命中时默认选中匹配项 */
+function htmlDetailMultiValueCell(values, searchLower, dataMultiKind) {
+  const arr = Array.isArray(values) ? values.filter(v => v != null && String(v).trim() !== '') : (values != null && String(values).trim() !== '' ? [values] : []);
+  if (arr.length === 0) return '<td>—</td>';
+  if (arr.length === 1) {
+    return `<td>${escapeHtmlText(String(arr[0]))}</td>`;
+  }
+  const selIdx = pickMultiValueDisplayIndex(arr, searchLower);
+  const opts = arr.map((v, i) =>
+    `<option value="${escapeHtmlAttr(String(v))}"${i === selIdx ? ' selected' : ''}>${escapeHtmlText(String(v))}</option>`
+  ).join('');
+  return `<td><select class="detail-multi-select" data-multi="${escapeHtmlAttr(dataMultiKind)}" aria-label="多个值，可切换查看">${opts}</select></td>`;
+}
+
+function userAssignmentMatchesSearch(u, searchLower) {
+  if (!searchLower) return true;
+  const sl = String(searchLower).trim().toLowerCase();
+  const parts = [];
+  if (u.experimentUid) parts.push(String(u.experimentUid));
+  (u.customerIds || []).forEach(x => parts.push(String(x)));
+  (u.merchantUids || []).forEach(x => parts.push(String(x)));
+  if (u.ip) parts.push(String(u.ip));
+  return parts.some(p => p.toLowerCase().includes(sl));
 }
 
 function htmlDirectMetricRow(key, displayName, aggregate, readOnly) {
@@ -2919,12 +2967,9 @@ function renderDetailTab(detail) {
   const scopeText = detail.userScope === '全部' ? '全部用户' : (detail.userScopeRules || []).map(r => `${r.dimension}: ${r.value}`).join('；');
   const groupsHtml = (detail.groups || []).map(g => `<div class="detail-item"><label>${g.name}</label><div class="value">${g.traffic}% 流量</div></div>`).join('');
   const allAssignments = detail.userAssignments || [];
-  const searchLower = detailUserSearch.trim().toLowerCase();
-  const filtered = searchLower
-    ? allAssignments.filter(u => {
-      const fields = [u.uid, u.clientId, u.merchantCustomerId, u.ip].filter(Boolean).map(s => String(s).toLowerCase());
-      return fields.some(f => f.includes(searchLower));
-    })
+  const searchLowerRaw = detailUserSearch.trim();
+  const filtered = searchLowerRaw
+    ? allAssignments.filter(u => userAssignmentMatchesSearch(u, searchLowerRaw))
     : allAssignments;
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / DETAIL_USER_PAGE_SIZE));
@@ -2933,16 +2978,16 @@ function renderDetailTab(detail) {
   const pageData = filtered.slice(start, start + DETAIL_USER_PAGE_SIZE);
   const tableRows = pageData.map(u => `
     <tr>
-      <td>${u.clientId || '-'}</td>
-      <td>${u.uid || '-'}</td>
-      <td>${u.merchantCustomerId || '-'}</td>
-      <td>${u.ip || '-'}</td>
+      <td>${escapeHtmlText(u.experimentUid != null && u.experimentUid !== '' ? String(u.experimentUid) : '—')}</td>
+      ${htmlDetailMultiValueCell(u.customerIds, detailUserSearch, 'customer')}
+      ${htmlDetailMultiValueCell(u.merchantUids, detailUserSearch, 'merchant')}
+      <td>${escapeHtmlText(u.ip || '—')}</td>
       <td>
-        <select class="select-group" data-uid="${(u.uid || '').replace(/"/g, '&quot;')}">
-          ${(detail.groups || []).map(g => `<option value="${g.name}" ${u.group === g.name ? 'selected' : ''}>${g.name}</option>`).join('')}
+        <select class="select-group" data-row-key="${escapeHtmlAttr(u.rowKey || '')}">
+          ${(detail.groups || []).map(g => `<option value="${escapeHtmlAttr(g.name)}"${u.group === g.name ? ' selected' : ''}>${escapeHtmlText(g.name)}</option>`).join('')}
         </select>
       </td>
-      <td>${u.assignedAt || '-'}</td>
+      <td>${escapeHtmlText(u.assignedAt || '—')}</td>
     </tr>
   `).join('');
   const paginationHtml = `
@@ -2976,13 +3021,13 @@ function renderDetailTab(detail) {
       <div class="detail-section-header">
         <label class="form-label" style="margin-bottom:0;">用户实验分组数据</label>
         <div class="detail-search-wrap">
-          <input type="text" id="detailUserSearchInput" class="detail-search-input" placeholder="搜索 client id / 客户 ID / 商户端客户 ID / IP" value="${(detailUserSearch || '').replace(/"/g, '&quot;')}" />
+          <input type="text" id="detailUserSearchInput" class="detail-search-input" placeholder="搜索 experiment uid / customer id / merchant uid / IP" value="${(detailUserSearch || '').replace(/"/g, '&quot;')}" />
         </div>
       </div>
-      <p class="form-hint">展示参与实验用户的 client id 与客户标识；支持通过下拉框手动修改某用户的实验分组；支持按 client id、客户 ID、商户端客户 ID、IP 搜索。</p>
+      <p class="form-hint">展示参与实验用户的 experiment uid、customer id、merchant uid（后两者可有多值，多值时默认展示一项，可在下拉中切换；搜索命中某值时默认选中该值）；支持通过下拉框手动修改某用户的实验分组。</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>client id</th><th>客户 ID</th><th>商户端客户 ID</th><th>IP 地址</th><th>用户分组</th><th>分组时间</th></tr></thead>
+          <thead><tr><th>experiment uid</th><th>customer id</th><th>merchant uid</th><th>IP 地址</th><th>用户分组</th><th>分组时间</th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
@@ -3243,7 +3288,12 @@ function bindDetailEvents(id, tab) {
   });
   document.querySelectorAll('.select-group').forEach(sel => {
     sel.addEventListener('change', () => {
-      console.log('原型：用户分组已修改', sel.dataset.uid, sel.value);
+      console.log('原型：用户分组已修改', sel.dataset.rowKey, sel.value);
+    });
+  });
+  document.querySelectorAll('.detail-multi-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      console.log('原型：多值字段已切换', sel.dataset.multi, sel.value);
     });
   });
   const searchInput = document.getElementById('detailUserSearchInput');
